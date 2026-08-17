@@ -5,6 +5,8 @@ import {defineConfig} from 'vite';
 
 export default defineConfig(() => {
   return {
+    // Set base to the GitHub Pages subpath so asset URLs are correct when deployed
+    base: '/tvs-2-/',
     plugins: [react(), tailwindcss()],
     resolve: {
       alias: {
