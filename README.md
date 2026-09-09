@@ -1,0 +1,57 @@
+﻿# tvs-2-
+
+[![AI Studio Banner](https://camo.githubusercontent.com/86bcf8eed3617be69c1d9c85006886e151bb77c49fe9e80ae334ebeaef6d098a/68747470733a2f2f61692e676f6f676c652e6465762f7374617469632f736974652d6173736574732f696d616765732f73686172652d6169732d3531333331353331382e706e67)](https://ai.studio/apps/c12bcb95-05ed-4bc6-9bf3-5b70711be8ad)
+
+TVS Tread - `tvs-2-`
+
+This repository contains the TVS Tread demo application (Vite + React + TypeScript) with mock data and UI flows for Driver, Gate, Management and WhatsApp scenarios.
+
+Live AI Studio preview: https://ai.studio/apps/c12bcb95-05ed-4bc6-9bf3-5b70711be8ad
+
+## Features
+
+- Driver pickup and tyre registration flows
+- Gate receiving and mismatch case simulation
+- Management dashboards and production workflow steps
+- Mock WhatsApp message queue and demo scenarios
+
+## Run locally
+
+Prerequisites: Node.js (>=16) and `npm`
+
+1. Install dependencies
+
+```bash
+npm install
+```
+
+2. Run the dev server
+
+```bash
+npm run dev
+```
+
+Open the local URL printed by Vite (for example `http://localhost:3004/`).
+
+## Deploying
+
+Deploy to Vercel, Netlify, or GitHub Pages. For Vercel, import the repo and use the default build command. For a manual static build:
+
+```bash
+npm run build
+# Serve the `dist` directory with any static host
+```
+
+## Screenshots
+
+To add screenshots, place image files in `assets/` and reference them here:
+
+```markdown
+![App screenshot](assets/screenshot.png)
+```
+
+If you want your GitHub README to include the dark UI screenshot you shared, upload the image file to `assets/` and tell me the filename — I'll add it to the README and push it.
+
+## License
+
+MIT
