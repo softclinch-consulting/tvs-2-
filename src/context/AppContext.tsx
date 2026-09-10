@@ -43,6 +43,11 @@ interface AppContextType {
   setActiveApp: (app: AppMode) => void;
   currentRole: UserRole;
   setCurrentRole: (role: UserRole) => void;
+  mobileSession: { user: UserProfile; expiresAt: number } | null;
+  mobileLogin: (identifier: string, password: string) => { success: boolean; requiresOtp: boolean; message: string };
+  verifyMobileOtp: (identifier: string, otp: string) => boolean;
+  openCustomerPreview: () => void;
+  logoutMobile: () => void;
   driverScreen: number;
   setDriverScreen: (s: number) => void;
   gateScreen: number;
@@ -132,6 +137,14 @@ const readPersisted = <T,>(key: string, fallback: T): T => {
 export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [activeApp, setActiveApp] = useState<AppMode>('driver');
   const [currentRole, setCurrentRole] = useState<UserRole>('ADMIN');
+  const [mobileSession, setMobileSession] = useState<{ user: UserProfile; expiresAt: number } | null>(() => {
+    try {
+      const raw = window.localStorage.getItem(`${STORAGE_KEY}:mobileSession`);
+      return raw ? JSON.parse(raw) as { user: UserProfile; expiresAt: number } : null;
+    } catch {
+      return null;
+    }
+  });
   const [driverScreen, setDriverScreen] = useState<number>(4); // Default to Driver Dashboard
   const [gateScreen, setGateScreen] = useState<number>(2); // Default to Gate Dashboard
   const [mgmtScreen, setMgmtScreen] = useState<number>(2); // Default to Executive Dashboard
@@ -162,6 +175,65 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const selectedCase = mismatchCases.find((c) => c.id === selectedCaseId);
   const selectedOrder = retreadOrders.find((o) => o.orderNo === selectedOrderNo);
   const canOperate = (...roles: UserRole[]) => currentRole === 'ADMIN' || roles.includes(currentRole);
+
+  const persistMobileSession = (session: { user: UserProfile; expiresAt: number } | null) => {
+    setMobileSession(session);
+    if (session) {
+      window.localStorage.setItem(`${STORAGE_KEY}:mobileSession`, JSON.stringify(session));
+    } else {
+      window.localStorage.removeItem(`${STORAGE_KEY}:mobileSession`);
+    }
+  };
+
+  const mobileLogin = (identifier: string, password: string) => {
+    const normalized = identifier.trim().toLowerCase();
+    const normalizedDigits = normalized.replace(/\D/g, '');
+    const user = users.find((candidate) =>
+      candidate.employeeId.toLowerCase() === normalized || candidate.phone.replace(/\D/g, '').endsWith(normalizedDigits)
+    );
+    if (!user || !['SALES_EMPLOYEE', 'CUSTOMER'].includes(user.role)) {
+      return { success: false, requiresOtp: false, message: 'No Sales Executive or Customer account matches those details.' };
+    }
+    if (password !== 'TVS1234') {
+      return { success: false, requiresOtp: false, message: 'Invalid password. Use the prototype password TVS1234.' };
+    }
+    return { success: true, requiresOtp: true, message: `OTP sent to ${user.phone}.` };
+  };
+
+  const verifyMobileOtp = (identifier: string, otp: string) => {
+    if (otp !== '849201') return false;
+    const normalized = identifier.trim().toLowerCase();
+    const normalizedDigits = normalized.replace(/\D/g, '');
+    const user = users.find((candidate) =>
+      candidate.employeeId.toLowerCase() === normalized || candidate.phone.replace(/\D/g, '').endsWith(normalizedDigits)
+    );
+    if (!user || !['SALES_EMPLOYEE', 'CUSTOMER'].includes(user.role)) return false;
+    persistMobileSession({ user, expiresAt: Date.now() + 30 * 60 * 1000 });
+    setCurrentRole(user.role);
+    return true;
+  };
+
+  const openCustomerPreview = () => {
+    const customer = users.find((user) => user.role === 'CUSTOMER');
+    if (!customer) return;
+    persistMobileSession({ user: customer, expiresAt: Date.now() + 30 * 60 * 1000 });
+    setCurrentRole('CUSTOMER');
+    setActiveApp('driver');
+  };
+
+  const logoutMobile = () => {
+    persistMobileSession(null);
+    setCurrentRole('ADMIN');
+  };
+
+  useEffect(() => {
+    if (!mobileSession || mobileSession.expiresAt > Date.now()) return;
+    logoutMobile();
+  }, [mobileSession]);
+
+  useEffect(() => {
+    if (mobileSession) setCurrentRole(mobileSession.user.role);
+  }, [mobileSession]);
 
   useEffect(() => {
     if (!backendReady) return;
@@ -265,7 +337,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   };
 
   const placeRetreadOrder = (data: { branch: string; customerId: string; orderType: 'RETREAD' | 'REPAIR' | 'BOTH'; vehicleNo: string; tyres: Array<{ serialNo: string; make: string; model?: string; size: string; dot?: string; casingCode?: string; colorField?: string; condition: 'Retreadable' | 'Repair Needed' | 'Casing OK' | 'Damaged' }> }): string => {
-    if (!canOperate('SALES_EMPLOYEE')) return selectedOrderNo;
+    if (!canOperate('SALES_EMPLOYEE', 'CUSTOMER')) return selectedOrderNo;
     const customer = customers.find((c) => c.id === data.customerId) || customers[0];
     const branchPrefix = data.branch.includes('Chennai') ? 'CHN' : data.branch.includes('Madurai') ? 'MDU' : data.branch.includes('Salem') ? 'SLM' : 'CBE';
     const orderIndex = retreadOrders.length + 125;
@@ -1104,6 +1176,11 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         setActiveApp,
         currentRole,
         setCurrentRole,
+        mobileSession,
+        mobileLogin,
+        verifyMobileOtp,
+        openCustomerPreview,
+        logoutMobile,
         driverScreen,
         setDriverScreen,
         gateScreen,

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useApp } from '../../context/AppContext';
 import {
   Smartphone,
@@ -31,7 +31,11 @@ import {
   DollarSign,
   Palette,
   Layers,
-  Send
+  Send,
+  LogIn,
+  LogOut,
+  ShieldCheck,
+  LayoutDashboard
 } from 'lucide-react';
 
 export const DriverAppContainer: React.FC = () => {
@@ -41,6 +45,7 @@ export const DriverAppContainer: React.FC = () => {
     jobCards,
     tyres,
     customers,
+    users,
     retreadOrders,
     complaints,
     payments,
@@ -60,13 +65,17 @@ export const DriverAppContainer: React.FC = () => {
     setSelectedOrderNo,
     setSelectedCaseId,
     setActiveApp,
-    setMgmtScreen
+    setMgmtScreen,
+    mobileSession,
+    mobileLogin,
+    verifyMobileOtp,
+    logoutMobile
   } = useApp();
 
   // Sub-app tab inside the mobile app
   const [mobileRoleView, setMobileRoleView] = useState<'SALES' | 'DRIVER' | 'CUSTOMER'>('SALES');
   const [salesSubTab, setSalesSubTab] = useState<'CUSTOMERS' | 'NEW_ORDER' | 'ORDERS' | 'TARGETS' | 'PROFILE'>('CUSTOMERS');
-  const [custSubTab, setCustSubTab] = useState<'TIMELINE' | 'COMPLAINTS' | 'PAYMENTS' | 'REWARDS' | 'PROFILE'>('TIMELINE');
+  const [custSubTab, setCustSubTab] = useState<'HOME' | 'PLACE_ORDER' | 'TIMELINE' | 'COMPLAINTS' | 'PAYMENTS' | 'REWARDS' | 'PROFILE'>('HOME');
 
   // Sales Employee form states
   const [custFormName, setCustFormName] = useState('');
@@ -110,10 +119,24 @@ export const DriverAppContainer: React.FC = () => {
   const [complaintSuccessMsg, setComplaintSuccessMsg] = useState('');
   const [payAmountInput, setPayAmountInput] = useState(44000);
   const [paymentSuccessMsg, setPaymentSuccessMsg] = useState('');
+  const [customerOrderSuccessMsg, setCustomerOrderSuccessMsg] = useState('');
+  const [customerScanMessage, setCustomerScanMessage] = useState('');
+  const [loginIdentifier, setLoginIdentifier] = useState('EMP-SALES-101');
+  const [loginPassword, setLoginPassword] = useState('TVS1234');
+  const [loginOtp, setLoginOtp] = useState('');
+  const [loginStep, setLoginStep] = useState<'CREDENTIALS' | 'OTP'>('CREDENTIALS');
+  const [loginMessage, setLoginMessage] = useState('');
+  const [loginBusy, setLoginBusy] = useState(false);
 
   const currentJob = jobCards.find((j) => j.id === selectedJobCardId) || jobCards[0];
   const currentTyres = tyres.filter((t) => t.jobCardId === currentJob.id);
   const currentOrder = retreadOrders.find((o) => o.orderNo === selectedOrderNo) || retreadOrders[0];
+  const authenticatedRole = mobileSession?.user.role;
+
+  useEffect(() => {
+    if (authenticatedRole === 'CUSTOMER') setMobileRoleView('CUSTOMER');
+    if (authenticatedRole === 'SALES_EMPLOYEE' && mobileRoleView === 'CUSTOMER') setMobileRoleView('SALES');
+  }, [authenticatedRole, mobileRoleView]);
 
   const handleCreateCustomerSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -158,6 +181,31 @@ export const DriverAppContainer: React.FC = () => {
       tyres: orderTyreList
     });
     setOrderSuccessMsg(`✓ Order ${orderNo} placed successfully! Auto Job Card generated.`);
+  };
+
+  const handleCustomerOrderSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const customerId = mobileSession?.user.id || 'CUST-001';
+    setOrderCustId(customerId);
+    const orderNo = placeRetreadOrder({
+      branch: orderBranch,
+      customerId,
+      orderType,
+      vehicleNo: orderVehicleNo,
+      tyres: orderTyreList
+    });
+    setSelectedOrderNo(orderNo);
+    setCustomerOrderSuccessMsg(`Order ${orderNo} placed successfully. Pickup will be scheduled shortly.`);
+    setCustSubTab('TIMELINE');
+  };
+
+  const handleCustomerScanTyre = (index: number) => {
+    const scannedSerial = `TVS-SCAN-${Date.now().toString().slice(-6)}`;
+    setOrderTyreList((prev) => prev.map((item, itemIndex) => itemIndex === index
+      ? { ...item, serialNo: scannedSerial, make: item.make || 'TVS', size: item.size || '11.00-20', casingCode: item.casingCode || `CSG-SCAN-${index + 1}` }
+      : item
+    ));
+    setCustomerScanMessage(`Tyre ${index + 1} scanned. Serial ${scannedSerial} added to this order.`);
   };
 
   const handleCreateJob = () => {
@@ -214,9 +262,91 @@ export const DriverAppContainer: React.FC = () => {
   };
 
   const handleCustomerPaySubmit = (method: 'UPI' | 'CREDIT_CARD' | 'RAZORPAY_GATEWAY') => {
-    const p = processPayment(currentOrder.orderNo, payAmountInput, method);
-    setPaymentSuccessMsg(`✓ Payment of ₹${p.amount.toLocaleString()} processed via ${method}. SAP Synced!`);
+    try {
+      const p = processPayment(currentOrder.orderNo, payAmountInput, method);
+      setPaymentSuccessMsg(`✓ Payment of ₹${p.amount.toLocaleString()} processed via ${method}. SAP Synced!`);
+    } catch (error) {
+      setPaymentSuccessMsg(error instanceof Error ? `Payment failed: ${error.message}` : 'Payment failed. Please retry.');
+    }
   };
+
+  const handleMobileLogin = (event: React.FormEvent) => {
+    event.preventDefault();
+    setLoginBusy(true);
+    const result = mobileLogin(loginIdentifier, loginPassword);
+    setLoginBusy(false);
+    setLoginMessage(result.message);
+    if (result.success && result.requiresOtp) setLoginStep('OTP');
+  };
+
+  const handleMobileOtp = (event: React.FormEvent) => {
+    event.preventDefault();
+    if (verifyMobileOtp(loginIdentifier, loginOtp)) {
+      const normalizedIdentifier = loginIdentifier.trim().toLowerCase();
+      const normalizedDigits = normalizedIdentifier.replace(/\D/g, '');
+      const verifiedUser = users.find((user) =>
+        user.employeeId.toLowerCase() === normalizedIdentifier || user.phone.replace(/\D/g, '').endsWith(normalizedDigits)
+      );
+      const verifiedRole = verifiedUser?.role;
+      setMobileRoleView(verifiedRole === 'CUSTOMER' ? 'CUSTOMER' : 'SALES');
+      setLoginMessage('');
+      setLoginStep('CREDENTIALS');
+      setLoginOtp('');
+      return;
+    }
+    setLoginMessage('Invalid OTP. Use the prototype OTP 849201.');
+  };
+
+  if (!mobileSession) {
+    return (
+      <div className="flex justify-center items-center min-h-[calc(100vh-120px)] bg-slate-950 p-2 sm:p-6">
+        <div className="w-full max-w-[440px] bg-slate-900 border-4 sm:border-8 border-slate-800 rounded-[36px] shadow-2xl overflow-hidden flex flex-col min-h-[680px] font-sans text-slate-100">
+          <div className="bg-slate-950 px-6 py-2 flex items-center justify-between text-[11px] text-slate-400 border-b border-slate-800">
+            <span className="font-semibold text-slate-300">09:41</span>
+            <div className="w-16 h-3 bg-slate-800 rounded-full" />
+            <span className="text-[10px] font-bold text-blue-400">Mobile Engine</span>
+          </div>
+          <div className="flex-1 p-5 flex flex-col justify-center gap-5">
+            <div className="text-center space-y-2">
+              <div className="w-14 h-14 rounded-2xl bg-blue-600 flex items-center justify-center mx-auto shadow-lg shadow-blue-600/20">
+                <ShieldCheck className="w-7 h-7 text-white" />
+              </div>
+              <p className="text-[10px] text-blue-400 font-bold uppercase tracking-wider">TVS TREAD Mobile</p>
+              <h2 className="text-xl font-extrabold text-white">{loginStep === 'OTP' ? 'Verify your OTP' : 'Secure mobile login'}</h2>
+              <p className="text-xs text-slate-400">{loginStep === 'OTP' ? `Code sent for ${loginIdentifier}` : 'Sign in as Sales Executive or Customer'}</p>
+            </div>
+
+            {loginMessage && <div className="p-2.5 rounded-xl border border-amber-500/30 bg-amber-500/10 text-amber-300 text-[11px]">{loginMessage}</div>}
+
+            {loginStep === 'CREDENTIALS' ? (
+              <form onSubmit={handleMobileLogin} className="space-y-3">
+                <label className="block text-[10px] text-slate-400 font-medium">Mobile Number / Employee ID
+                  <input value={loginIdentifier} onChange={(event) => setLoginIdentifier(event.target.value)} className="mt-1 w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2.5 text-xs text-white" placeholder="EMP-SALES-101 or 9876543210" required />
+                </label>
+                <label className="block text-[10px] text-slate-400 font-medium">Password
+                  <input type="password" value={loginPassword} onChange={(event) => setLoginPassword(event.target.value)} className="mt-1 w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2.5 text-xs text-white" required />
+                </label>
+                <button disabled={loginBusy} className="w-full bg-blue-600 hover:bg-blue-500 disabled:opacity-60 text-white font-bold py-2.5 rounded-xl text-xs flex items-center justify-center gap-2">
+                  <LogIn className="w-4 h-4" /> {loginBusy ? 'Checking account...' : 'Login & Send OTP'}
+                </button>
+                <button type="button" onClick={() => setLoginMessage('Password reset link sent to the registered mobile number.')} className="w-full text-[11px] text-blue-400 hover:text-blue-300">Forgot Password?</button>
+              </form>
+            ) : (
+              <form onSubmit={handleMobileOtp} className="space-y-3">
+                <label className="block text-[10px] text-slate-400 font-medium">6-digit OTP
+                  <input inputMode="numeric" maxLength={6} value={loginOtp} onChange={(event) => setLoginOtp(event.target.value)} className="mt-1 w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2.5 text-center tracking-[0.4em] text-sm text-white" placeholder="849201" required />
+                </label>
+                <button className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-2.5 rounded-xl text-xs">Verify OTP & Continue</button>
+                <button type="button" onClick={() => { setLoginStep('CREDENTIALS'); setLoginMessage(''); }} className="w-full text-[11px] text-slate-400 hover:text-white">Back to login</button>
+              </form>
+            )}
+
+            <div className="text-center text-[10px] text-slate-500">Prototype credentials: Sales `EMP-SALES-101`, Customer `CUST-001`, password `TVS1234`, OTP `849201`</div>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex justify-center items-center min-h-[calc(100vh-120px)] bg-slate-950 p-2 sm:p-6">
@@ -238,31 +368,44 @@ export const DriverAppContainer: React.FC = () => {
         {/* Mobile Sub-Role Selector Bar */}
         <div className="bg-slate-950 px-3 py-1.5 border-b border-slate-800 flex items-center justify-between text-[10px] text-slate-400 shrink-0">
           <div className="flex items-center gap-1 bg-slate-900 p-0.5 rounded-lg border border-slate-800">
-            <button
-              onClick={() => setMobileRoleView('SALES')}
-              className={`px-2 py-0.5 rounded text-[10px] font-semibold transition ${
-                mobileRoleView === 'SALES' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'
-              }`}
-            >
-              Sales Exec
-            </button>
-            <button
-              onClick={() => setMobileRoleView('DRIVER')}
-              className={`px-2 py-0.5 rounded text-[10px] font-semibold transition ${
-                mobileRoleView === 'DRIVER' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white'
-              }`}
-            >
-              Driver (24 Screens)
-            </button>
-            <button
-              onClick={() => setMobileRoleView('CUSTOMER')}
-              className={`px-2 py-0.5 rounded text-[10px] font-semibold transition ${
-                mobileRoleView === 'CUSTOMER' ? 'bg-emerald-600 text-white' : 'text-slate-400 hover:text-white'
-              }`}
-            >
-              Customer App
-            </button>
+            {authenticatedRole === 'SALES_EMPLOYEE' && (
+              <button
+                onClick={() => setMobileRoleView('SALES')}
+                className={`px-2 py-0.5 rounded text-[10px] font-semibold transition ${
+                  mobileRoleView === 'SALES' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                Sales Exec
+              </button>
+            )}
+            {authenticatedRole === 'SALES_EMPLOYEE' && (
+              <button
+                onClick={() => setMobileRoleView('DRIVER')}
+                className={`px-2 py-0.5 rounded text-[10px] font-semibold transition ${
+                  mobileRoleView === 'DRIVER' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                Driver (24 Screens)
+              </button>
+            )}
+            {authenticatedRole === 'CUSTOMER' && (
+              <button
+                onClick={() => setMobileRoleView('CUSTOMER')}
+                className={`px-2 py-0.5 rounded text-[10px] font-semibold transition ${
+                  mobileRoleView === 'CUSTOMER' ? 'bg-emerald-600 text-white' : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                Customer
+              </button>
+            )}
           </div>
+
+          <span className="text-[10px] text-slate-300 truncate max-w-[110px]" title={mobileSession.user.name}>
+            {mobileSession.user.name}
+          </span>
+          <button onClick={logoutMobile} className="flex items-center gap-1 text-[10px] text-slate-400 hover:text-white" title="Log out">
+            <LogOut className="w-3 h-3" /> Logout
+          </button>
 
           {mobileRoleView === 'DRIVER' && (
             <div className="flex items-center gap-1">
@@ -1082,16 +1225,90 @@ export const DriverAppContainer: React.FC = () => {
                 <div className="flex items-center justify-between">
                   <div>
                     <span className="text-[10px] text-emerald-300 uppercase font-semibold">Customer Portal</span>
-                    <h3 className="text-base font-bold text-white">RAJA (ABC Transport)</h3>
+                    <h3 className="text-base font-bold text-white">{mobileSession.user.name}</h3>
                     <p className="text-[11px] text-slate-400">Active Order: {currentOrder.orderNo}</p>
                   </div>
                   <div className="w-10 h-10 rounded-full bg-emerald-600 flex items-center justify-center text-white font-bold">
-                    R
+                    {mobileSession.user.name.charAt(0)}
                   </div>
                 </div>
               </div>
 
-              {/* Sub-tab 1: TIMELINE */}
+              {custSubTab === 'HOME' && (
+                <div className="space-y-3">
+                  <div className="grid grid-cols-2 gap-2">
+                    <button onClick={() => setCustSubTab('PLACE_ORDER')} className="bg-emerald-600 hover:bg-emerald-500 p-3 rounded-xl text-left text-white transition">
+                      <Plus className="w-4 h-4 mb-2" />
+                      <strong className="block text-xs">Place Order</strong>
+                      <span className="text-[10px] text-emerald-100">Retread or repair</span>
+                    </button>
+                    <button onClick={() => setCustSubTab('TIMELINE')} className="bg-slate-850 hover:bg-slate-800 p-3 rounded-xl border border-slate-800 text-left transition">
+                      <Clock className="w-4 h-4 mb-2 text-blue-400" />
+                      <strong className="block text-xs text-white">Track Order</strong>
+                      <span className="text-[10px] text-slate-400">Live status updates</span>
+                    </button>
+                    <button onClick={() => setCustSubTab('PAYMENTS')} className="bg-slate-850 hover:bg-slate-800 p-3 rounded-xl border border-slate-800 text-left transition">
+                      <CreditCard className="w-4 h-4 mb-2 text-amber-400" />
+                      <strong className="block text-xs text-white">Outstanding</strong>
+                      <span className="text-[10px] text-slate-400">Pay outstanding balance</span>
+                    </button>
+                    <button onClick={() => setCustSubTab('COMPLAINTS')} className="bg-slate-850 hover:bg-slate-800 p-3 rounded-xl border border-slate-800 text-left transition">
+                      <MessageSquare className="w-4 h-4 mb-2 text-rose-400" />
+                      <strong className="block text-xs text-white">Complaints</strong>
+                      <span className="text-[10px] text-slate-400">Raise or view issues</span>
+                    </button>
+                  </div>
+                  {customerOrderSuccessMsg && <div className="p-2 bg-emerald-500/10 border border-emerald-500/30 rounded-xl text-emerald-300 text-[11px]">{customerOrderSuccessMsg}</div>}
+                  <div className="bg-slate-850 p-3 rounded-2xl border border-slate-800">
+                    <div className="flex justify-between items-center">
+                      <span className="text-[10px] text-slate-400">Active order</span>
+                      <span className="text-[10px] text-emerald-400 font-bold">{currentOrder.status.replace(/_/g, ' ')}</span>
+                    </div>
+                    <strong className="text-white text-sm block mt-1">{currentOrder.orderNo}</strong>
+                    <p className="text-[10px] text-slate-400 mt-1">{currentOrder.tyreCount} tyres • {currentOrder.orderType}</p>
+                  </div>
+                </div>
+              )}
+
+              {custSubTab === 'PLACE_ORDER' && (
+                <form onSubmit={handleCustomerOrderSubmit} className="bg-slate-850 p-3.5 rounded-2xl border border-slate-800 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <h4 className="font-bold text-white flex items-center gap-1.5"><Plus className="w-3.5 h-3.5 text-emerald-400" /> Place New Order</h4>
+                    <span className="text-[10px] text-emerald-400">{orderTyreList.length} tyres</span>
+                  </div>
+                  {customerScanMessage && <div className="p-2 bg-blue-500/10 border border-blue-500/30 rounded-xl text-blue-300 text-[11px]">{customerScanMessage}</div>}
+                  <div className="grid grid-cols-2 gap-2">
+                    <label className="text-[10px] text-slate-400">Order Type
+                      <select value={orderType} onChange={(e) => setOrderType(e.target.value as 'RETREAD' | 'REPAIR' | 'BOTH')} className="mt-1 w-full bg-slate-800 border border-slate-700 rounded-lg px-2 py-1.5 text-xs text-white">
+                        <option value="RETREAD">Retread</option><option value="REPAIR">Repair</option><option value="BOTH">Retread + Repair</option>
+                      </select>
+                    </label>
+                    <label className="text-[10px] text-slate-400">Vehicle Number
+                      <input value={orderVehicleNo} onChange={(e) => setOrderVehicleNo(e.target.value)} className="mt-1 w-full bg-slate-800 border border-slate-700 rounded-lg px-2 py-1.5 text-xs text-white" required />
+                    </label>
+                  </div>
+                  <div className="space-y-2">
+                    {orderTyreList.map((tyre, index) => (
+                      <div key={`${tyre.serialNo}-${index}`} className="bg-slate-900 p-2.5 rounded-xl border border-slate-800 grid grid-cols-2 gap-2">
+                        <div className="col-span-2 flex items-center justify-between">
+                          <span className="text-[10px] text-emerald-400 font-bold">Tyre {index + 1}</span>
+                          <button type="button" onClick={() => handleCustomerScanTyre(index)} className="text-[10px] text-blue-300 hover:text-white flex items-center gap-1 border border-blue-500/30 rounded-lg px-2 py-1">
+                            <QrCode className="w-3 h-3" /> Scan Tyre
+                          </button>
+                        </div>
+                        <input value={tyre.serialNo} onChange={(e) => setOrderTyreList((prev) => prev.map((item, itemIndex) => itemIndex === index ? { ...item, serialNo: e.target.value } : item))} placeholder="Serial number" className="bg-slate-800 border border-slate-700 rounded-lg px-2 py-1.5 text-xs text-white" required />
+                        <input value={tyre.size} onChange={(e) => setOrderTyreList((prev) => prev.map((item, itemIndex) => itemIndex === index ? { ...item, size: e.target.value } : item))} placeholder="Tyre size" className="bg-slate-800 border border-slate-700 rounded-lg px-2 py-1.5 text-xs text-white" required />
+                        <input value={tyre.make} onChange={(e) => setOrderTyreList((prev) => prev.map((item, itemIndex) => itemIndex === index ? { ...item, make: e.target.value } : item))} placeholder="Make" className="bg-slate-800 border border-slate-700 rounded-lg px-2 py-1.5 text-xs text-white" required />
+                        <input value={tyre.casingCode || ''} onChange={(e) => setOrderTyreList((prev) => prev.map((item, itemIndex) => itemIndex === index ? { ...item, casingCode: e.target.value } : item))} placeholder="Casing code" className="bg-slate-800 border border-slate-700 rounded-lg px-2 py-1.5 text-xs text-white" />
+                      </div>
+                    ))}
+                  </div>
+                  <button type="button" onClick={handleAddTyreToOrderDraft} className="w-full border border-slate-700 text-slate-300 hover:text-white py-2 rounded-xl text-xs font-bold"><Plus className="w-3.5 h-3.5 inline mr-1" /> Add Another Tyre</button>
+                  <button type="submit" className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-2.5 rounded-xl text-xs">Review & Submit Order</button>
+                </form>
+              )}
+
+              {/* Sub-tab: TIMELINE */}
               {custSubTab === 'TIMELINE' && (
                 <div className="bg-slate-850 p-3.5 rounded-2xl border border-slate-800 space-y-3">
                   <h4 className="font-bold text-white flex items-center gap-1.5">
@@ -1351,6 +1568,20 @@ export const DriverAppContainer: React.FC = () => {
 
           {mobileRoleView === 'CUSTOMER' && (
             <>
+              <button
+                onClick={() => setCustSubTab('HOME')}
+                className={`flex flex-col items-center gap-0.5 transition ${custSubTab === 'HOME' ? 'text-emerald-400 font-bold' : 'hover:text-slate-200'}`}
+              >
+                <LayoutDashboard className="w-4 h-4" />
+                <span>HOME</span>
+              </button>
+              <button
+                onClick={() => setCustSubTab('PLACE_ORDER')}
+                className={`flex flex-col items-center gap-0.5 transition ${custSubTab === 'PLACE_ORDER' ? 'text-emerald-400 font-bold' : 'hover:text-slate-200'}`}
+              >
+                <Plus className="w-4 h-4" />
+                <span>ORDER</span>
+              </button>
               <button
                 onClick={() => setCustSubTab('TIMELINE')}
                 className={`flex flex-col items-center gap-0.5 transition ${custSubTab === 'TIMELINE' ? 'text-emerald-400 font-bold' : 'hover:text-slate-200'}`}

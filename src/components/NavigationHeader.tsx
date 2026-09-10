@@ -23,6 +23,7 @@ export const NavigationHeader: React.FC = () => {
     setActiveApp,
     currentRole,
     setCurrentRole,
+    openCustomerPreview,
     currentScenarioStep,
     runGuidedScenarioStep,
     resetDemoData,
@@ -113,7 +114,11 @@ export const NavigationHeader: React.FC = () => {
             <span className="text-slate-400 text-[11px] mr-1 hidden sm:inline">Role:</span>
             <select
               value={currentRole}
-              onChange={(e) => setCurrentRole(e.target.value as UserRole)}
+              onChange={(e) => {
+                const nextRole = e.target.value as UserRole;
+                setCurrentRole(nextRole);
+                if (nextRole === 'CUSTOMER') openCustomerPreview();
+              }}
               className="bg-slate-800 text-slate-200 text-xs rounded px-2 py-0.5 font-medium border border-slate-700 focus:outline-none focus:ring-1 focus:ring-blue-500"
             >
               {roleOptions.map((r) => (
